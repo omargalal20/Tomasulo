@@ -1,0 +1,720 @@
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Scanner;
+import java.util.Vector;
+
+public class Tomasulo {
+
+	static AddReservationStation ARS;
+	static MulReservationStation MRS;
+	static InstructionQueue IQ;
+	static Memory mem;
+	static LoadBuffer LB;
+	static StoreBuffer SB;
+	static double commonDataBus;
+	static int clock = 0;
+	static FPR[] registerFile = new FPR[32];
+	static int instructionIndexTobeIssued = 1;
+	static int ARScounter = 0;
+	static int MRScounter = 0;
+	static int LBcounter = 0;
+	static int SBcounter = 0;
+	static int addlat = 0;
+	static int sublat = addlat;
+	static int mullat = 0;
+	static int divlat = mullat;
+	static int storelatency = 0;
+	static int loadlatency = 0;
+	static int instructionIndexTobeExec = 1;
+	static boolean[] flags;
+
+	public Tomasulo() {
+		ARS = new AddReservationStation();
+		MRS = new MulReservationStation();
+		IQ = new InstructionQueue();
+		mem = new Memory();
+		mem.dataMemory[100] = 100;
+		mem.dataMemory[150] = 150;
+		LB = new LoadBuffer();
+		SB = new StoreBuffer();
+		for (int i = 0; i < 32; i++) {
+			registerFile[i] = new FPR("F" + (i));
+		}
+	}
+
+	public static void PrintMemory() {
+		System.out.println("Memory : ");
+		for (int i = 0; i < mem.dataMemory.length; i++) {
+			System.out.print(mem.dataMemory[i] + " ");
+		}
+		System.out.println();
+		System.out.println("--------------------------------------------------------------");
+	}
+
+	public static void LoadUnit(String F1, int address) {
+		if (Integer.parseInt(F1.substring(1, F1.length())) >= 0
+				&& Integer.parseInt(F1.substring(1, F1.length())) <= 31) {
+			registerFile[Integer.parseInt(F1.substring(1, F1.length()))].value = mem.LoadData(address);
+		}
+	}
+
+	public static void StoreUnit(String F1, int address) {
+		if (Integer.parseInt(F1.substring(1, F1.length())) >= 0
+				&& Integer.parseInt(F1.substring(1, F1.length())) <= 31) {
+			mem.dataMemory[address] = registerFile[Integer.parseInt(F1.substring(1, F1.length()))].value;
+		}
+	}
+
+	public static void AdditionUnit(String F1, String F2, String F3) {
+		double val1 = 0;
+		double val2 = 0;
+		for (int i = 0; i < registerFile.length; i++) {
+			if (registerFile[i].name.equals(F2)) {
+				val1 = registerFile[i].value;
+				break;
+			} else
+				continue;
+		}
+		for (int i = 0; i < registerFile.length; i++) {
+			if (registerFile[i].name.equals(F3)) {
+				val2 = registerFile[i].value;
+				break;
+			} else
+				continue;
+		}
+		for (int i = 0; i < registerFile.length; i++) {
+			if (registerFile[i].name.equals(F1)) {
+				registerFile[i].value = val1 + val2;
+			}
+		}
+	}
+
+	public static void SubtractionUnit(String F1, String F2, String F3) {
+		double val1 = 0;
+		double val2 = 0;
+		for (int i = 0; i < registerFile.length; i++) {
+			if (registerFile[i].name.equals(F2)) {
+				val1 = registerFile[i].value;
+				break;
+			} else
+				continue;
+		}
+		for (int i = 0; i < registerFile.length; i++) {
+			if (registerFile[i].name.equals(F3)) {
+				val2 = registerFile[i].value;
+				break;
+			} else
+				continue;
+		}
+		for (int i = 0; i < registerFile.length; i++) {
+			if (registerFile[i].name.equals(F1)) {
+				registerFile[i].value = val1 - val2;
+			}
+		}
+	}
+
+	public static void MultiplicationUnit(String F1, String F2, String F3) {
+		double val1 = 0;
+		double val2 = 0;
+		for (int i = 0; i < registerFile.length; i++) {
+			if (registerFile[i].name.equals(F2)) {
+				val1 = registerFile[i].value;
+				break;
+			} else
+				continue;
+		}
+		for (int i = 0; i < registerFile.length; i++) {
+			if (registerFile[i].name.equals(F3)) {
+				val2 = registerFile[i].value;
+				break;
+			} else
+				continue;
+		}
+		for (int i = 0; i < registerFile.length; i++) {
+			if (registerFile[i].name.equals(F1)) {
+				registerFile[i].value = val1 * val2;
+			}
+		}
+	}
+
+	public static void DivisionUnit(String F1, String F2, String F3) {
+		double val1 = 0;
+		double val2 = 0;
+		for (int i = 0; i < registerFile.length; i++) {
+			if (registerFile[i].name.equals(F2)) {
+				val1 = registerFile[i].value;
+				break;
+			} else
+				continue;
+		}
+		for (int i = 0; i < registerFile.length; i++) {
+			if (registerFile[i].name.equals(F3)) {
+				val2 = registerFile[i].value;
+				break;
+			} else
+				continue;
+		}
+		for (int i = 0; i < registerFile.length; i++) {
+			if (registerFile[i].name.equals(F1)) {
+				registerFile[i].value = val1 / val2;
+			}
+		}
+	}
+
+	public static void IssueInstruction() {
+		Vector<String> Instruction = IQ.queue.get(instructionIndexTobeIssued);
+		switch (Instruction.get(0)) {
+		case "ADD.D":
+			if (ARScounter < 3) {
+				ARS.RStation[ARScounter + 1][1] = "1";
+				ARS.RStation[ARScounter + 1][2] = "ADD.D";
+				if (registerFile[Integer
+						.parseInt(Instruction.get(2).substring(1, Instruction.get(2).length()))].Qi == "") {
+					ARS.RStation[ARScounter + 1][3] = registerFile[Integer
+							.parseInt(Instruction.get(2).substring(1, Instruction.get(2).length()))].value + "";
+				} else {
+					ARS.RStation[ARScounter + 1][5] = registerFile[Integer
+							.parseInt(Instruction.get(2).substring(1, Instruction.get(2).length()))].Qi + "";
+				}
+				if (registerFile[Integer
+						.parseInt(Instruction.get(3).substring(1, Instruction.get(3).length()))].Qi == "") {
+					ARS.RStation[ARScounter + 1][4] = registerFile[Integer
+							.parseInt(Instruction.get(3).substring(1, Instruction.get(3).length()))].value + "";
+				} else {
+					ARS.RStation[ARScounter + 1][6] = registerFile[Integer
+							.parseInt(Instruction.get(3).substring(1, Instruction.get(3).length()))].Qi + "";
+				}
+				int index = Integer.parseInt(Instruction.get(1).substring(1, Instruction.get(1).length()));
+				registerFile[index].Qi = "A" + (ARScounter + 1);
+				IQ.queue.get(instructionIndexTobeIssued).set(4, clock + "");
+				ARS.IssueDate[ARScounter] = clock;
+				ARScounter++;
+				instructionIndexTobeIssued++;
+			}
+			break;
+		case "SUB.D":
+			if (ARScounter < 3) {
+				ARS.RStation[ARScounter + 1][1] = "1";
+				ARS.RStation[ARScounter + 1][2] = "SUB.D";
+				if (registerFile[Integer
+						.parseInt(Instruction.get(2).substring(1, Instruction.get(2).length()))].Qi == "") {
+					ARS.RStation[ARScounter + 1][3] = registerFile[Integer
+							.parseInt(Instruction.get(2).substring(1, Instruction.get(2).length()))].value + "";
+				} else {
+					ARS.RStation[ARScounter + 1][5] = registerFile[Integer
+							.parseInt(Instruction.get(2).substring(1, Instruction.get(2).length()))].Qi + "";
+				}
+				if (registerFile[Integer
+						.parseInt(Instruction.get(3).substring(1, Instruction.get(3).length()))].Qi == "") {
+					ARS.RStation[ARScounter + 1][4] = registerFile[Integer
+							.parseInt(Instruction.get(3).substring(1, Instruction.get(3).length()))].value + "";
+				} else {
+					ARS.RStation[ARScounter + 1][6] = registerFile[Integer
+							.parseInt(Instruction.get(3).substring(1, Instruction.get(3).length()))].Qi + "";
+				}
+
+				int index = Integer.parseInt(Instruction.get(1).substring(1, Instruction.get(1).length()));
+				registerFile[index].Qi = "A" + (ARScounter + 1);
+				IQ.queue.get(instructionIndexTobeIssued).set(4, clock + "");
+				ARS.IssueDate[ARScounter] = clock;
+				ARScounter++;
+				instructionIndexTobeIssued++;
+			}
+			break;
+		case "MUL.D":
+			if (MRScounter < 2) {
+				MRS.RStation[MRScounter + 1][1] = "1";
+				MRS.RStation[MRScounter + 1][2] = "MUL.D";
+				if (registerFile[Integer
+						.parseInt(Instruction.get(2).substring(1, Instruction.get(2).length()))].Qi == "") {
+					MRS.RStation[MRScounter + 1][3] = registerFile[Integer
+							.parseInt(Instruction.get(2).substring(1, Instruction.get(2).length()))].value + "";
+				} else {
+					MRS.RStation[MRScounter + 1][5] = registerFile[Integer
+							.parseInt(Instruction.get(2).substring(1, Instruction.get(2).length()))].Qi + "";
+				}
+				if (registerFile[Integer
+						.parseInt(Instruction.get(3).substring(1, Instruction.get(3).length()))].Qi == "") {
+					MRS.RStation[MRScounter + 1][4] = registerFile[Integer
+							.parseInt(Instruction.get(3).substring(1, Instruction.get(3).length()))].value + "";
+				} else {
+					MRS.RStation[MRScounter + 1][6] = registerFile[Integer
+							.parseInt(Instruction.get(3).substring(1, Instruction.get(3).length()))].Qi + "";
+				}
+
+				int index = Integer.parseInt(Instruction.get(1).substring(1, Instruction.get(1).length()));
+				registerFile[index].Qi = "M" + (MRScounter + 1);
+				IQ.queue.get(instructionIndexTobeIssued).set(4, clock + "");
+				MRS.IssueDate[MRScounter] = clock;
+				MRScounter++;
+				instructionIndexTobeIssued++;
+			}
+			break;
+		case "DIV.D":
+			if (MRScounter < 2) {
+				MRS.RStation[MRScounter + 1][1] = "1";
+				MRS.RStation[MRScounter + 1][2] = "DIV.D";
+				if (registerFile[Integer
+						.parseInt(Instruction.get(2).substring(1, Instruction.get(2).length()))].Qi == "") {
+					MRS.RStation[MRScounter + 1][3] = registerFile[Integer
+							.parseInt(Instruction.get(2).substring(1, Instruction.get(2).length()))].value + "";
+				} else {
+					MRS.RStation[MRScounter + 1][5] = registerFile[Integer
+							.parseInt(Instruction.get(2).substring(1, Instruction.get(2).length()))].Qi + "";
+				}
+				if (registerFile[Integer
+						.parseInt(Instruction.get(3).substring(1, Instruction.get(3).length()))].Qi == "") {
+					MRS.RStation[MRScounter + 1][4] = registerFile[Integer
+							.parseInt(Instruction.get(3).substring(1, Instruction.get(3).length()))].value + "";
+				} else {
+					MRS.RStation[MRScounter + 1][6] = registerFile[Integer
+							.parseInt(Instruction.get(3).substring(1, Instruction.get(3).length()))].Qi + "";
+				}
+
+				int index = Integer.parseInt(Instruction.get(1).substring(1, Instruction.get(1).length()));
+				registerFile[index].Qi = "M" + (MRScounter + 1);
+				IQ.queue.get(instructionIndexTobeIssued).set(4, clock + "");
+				MRS.IssueDate[MRScounter] = clock;
+				MRScounter++;
+				instructionIndexTobeIssued++;
+			}
+			break;
+		case "L.D":
+			if (LBcounter < 3) {
+				LB.loadBuff[LBcounter + 1][1] = "1";
+				LB.loadBuff[LBcounter + 1][2] = Instruction.get(2) + "";
+				int index = Integer.parseInt(Instruction.get(1).substring(1, Instruction.get(1).length()));
+				registerFile[index].Qi = "L" + (LBcounter + 1);
+				IQ.queue.get(instructionIndexTobeIssued).set(4, clock + "");
+				LB.IssueDate[LBcounter] = clock;
+				LBcounter++;
+				instructionIndexTobeIssued++;
+			}
+			break;
+		case "S.D":
+			if (SBcounter < 3) {
+				SB.storeBuff[SBcounter + 1][1] = "1";
+				SB.storeBuff[SBcounter + 1][2] = Instruction.get(2) + "";
+				int index = Integer.parseInt(Instruction.get(1).substring(1, Instruction.get(1).length()));
+				registerFile[index].Qi = "S" + (SBcounter + 1);
+				IQ.queue.get(instructionIndexTobeIssued).set(4, clock + "");
+				SB.IssueDate[SBcounter] = clock;
+				SBcounter++;
+				instructionIndexTobeIssued++;
+			}
+			break;
+		}
+	}
+
+	public static int indexOfSmallest(int[] arr) {
+		int imin = 0;
+		for (int i = 1; i < arr.length; i++) {
+			if (arr[i] < arr[imin]) {
+				imin = i;
+			}
+		}
+		return imin;
+	}
+
+	public static int findIndex(int arr[], int t) {
+		int index = Arrays.binarySearch(arr, t);
+		return (index < 0) ? -1 : index;
+	}
+
+	public static void startExecution() {
+		System.out.println("________________start Execution___________");
+		int[] sortedARS = ARS.IssueDate;
+		Arrays.sort(sortedARS);
+		int[] sortedMRS = MRS.IssueDate;
+		Arrays.sort(sortedMRS);
+		int[] sortedLB = LB.IssueDate;
+		int var1 = 0;
+		int var2 = 0;
+		int var3 = 0;
+		int var4 = 0;
+		Arrays.sort(sortedLB);
+		int[] sortedSB = SB.IssueDate;
+		Arrays.sort(sortedSB);
+		for (int j = 0; j < sortedARS.length; j++) {
+			int minARS = sortedARS[j];
+			int index = findIndex(ARS.IssueDate, minARS);
+			if (ARS.RStation[index + 1][3] != (null) && ARS.RStation[index + 1][4] != (null)) {
+				for (int i = 0; i < IQ.queue.size(); i++) {
+					if (IQ.queue.get(i).get(4).equals(minARS + "") && IQ.queue.get(i).get(5).equals("-1")) {
+						IQ.queue.get(i).set(5, clock + "");
+						IQ.queue.get(i).set(6, clock + addlat + "");
+						break;
+					}
+				}
+				ARS.IssueDate[index] = Integer.MAX_VALUE;
+				var1 = index + 1;
+				break;
+			}
+		}
+		for (int j = 0; j < sortedMRS.length; j++) {
+			int minMRS = sortedMRS[j];
+			int index = findIndex(MRS.IssueDate, minMRS);
+			if (MRS.RStation[index + 1][3] != (null) && MRS.RStation[index + 1][4] != (null)) {
+				for (int i = 0; i < IQ.queue.size(); i++) {
+					if (IQ.queue.get(i).get(4).equals(minMRS + "") && IQ.queue.get(i).get(5).equals("-1")) {
+						IQ.queue.get(i).set(5, clock + "");
+						IQ.queue.get(i).set(6, clock + mullat + "");
+						break;
+					}
+				}
+				MRS.IssueDate[index] = Integer.MAX_VALUE;
+				var2 = index + 1;
+				break;
+			}
+		}
+		for (int j = 0; j < sortedLB.length; j++) {
+			int minLB = sortedLB[j];
+			int index = findIndex(LB.IssueDate, minLB);
+			for (int i = 1; i < IQ.queue.size(); i++) {
+				if (IQ.queue.get(i).get(4).equals(minLB + "") && IQ.queue.get(i).get(5).equals("-1")) {
+					IQ.queue.get(i).set(5, clock + "");
+					IQ.queue.get(i).set(6, clock + loadlatency + "");
+					break;
+				}
+			}
+			LB.IssueDate[index] = Integer.MAX_VALUE;
+			var3 = index;
+			System.out.println(var3 + " var3333333333333333333333333333333333333");
+			break;
+		}
+		for (int j = 0; j < sortedSB.length; j++) {
+			int minSB = sortedSB[j];
+			int index = findIndex(SB.IssueDate, minSB);
+			if (SB.storeBuff[index + 1][3] != (null)) {
+				for (int i = 0; i < IQ.queue.size(); i++) {
+					if (IQ.queue.get(i).get(4).equals(minSB + "") && IQ.queue.get(i).get(5).equals("-1")) {
+						IQ.queue.get(i).set(5, clock + "");
+						IQ.queue.get(i).set(6, clock + storelatency + "");
+						break;
+					}
+				}
+				SB.IssueDate[index] = Integer.MAX_VALUE;
+				var4 = index + 1;
+				break;
+			}
+		}
+		for (int i = 1; i < IQ.queue.size(); i++) {
+			if (IQ.queue.get(i).get(0).equals("ADD.D") || IQ.queue.get(i).get(0).equals("SUB.D"))
+				if (Integer.parseInt(IQ.queue.get(i).get(5)) + addlat == clock && IQ.queue.get(i).get(5) != null) {
+					endExecution(IQ.queue.get(i), var1);
+				}
+			if (IQ.queue.get(i).get(0).equals("MUL.D") || IQ.queue.get(i).get(0).equals("DIV.D"))
+				if (Integer.parseInt(IQ.queue.get(i).get(5)) + mullat == clock && IQ.queue.get(i).get(5) != null) {
+					endExecution(IQ.queue.get(i), var2);
+				}
+			if (IQ.queue.get(i).get(0).equals("S.D"))
+				if (Integer.parseInt(IQ.queue.get(i).get(5)) + storelatency == clock
+						&& IQ.queue.get(i).get(5) != null) {
+					endExecution(IQ.queue.get(i), var4);
+				}
+			if (IQ.queue.get(i).get(0).equals("L.D"))
+				if (Integer.parseInt(IQ.queue.get(i).get(5)) + loadlatency == clock && IQ.queue.get(i).get(5) != null) {
+					endExecution(IQ.queue.get(i), var3);
+				}
+		}
+	}
+
+	public static void endExecution(Vector<String> instruction, int index) {
+		System.out.println(index + "___________ INDEX ____________ INDEX __________________");
+		switch (instruction.get(0)) {
+		case "ADD.D":
+			double value = registerFile[Integer
+					.parseInt(instruction.get(2).substring(1, instruction.get(2).length()))].value
+					+ registerFile[Integer
+							.parseInt(instruction.get(3).substring(1, instruction.get(3).length()))].value;
+			writeBack(value, instruction, index);
+			for (int i = 1; i < ARS.RStation.length; i++) {
+				if (ARS.RStation[i][3] == (instruction.get(2)) && ARS.RStation[i][4] == (instruction.get(3))) {
+					ARS.RStation[i][0] = null;
+					ARS.RStation[i][1] = null;
+					ARS.RStation[i][2] = null;
+					ARS.RStation[i][3] = null;
+					ARS.RStation[i][4] = null;
+					ARS.RStation[i][5] = null;
+					ARS.RStation[i][6] = null;
+				}
+			}
+			break;
+		case "SUB.D":
+			double value1 = registerFile[Integer
+					.parseInt(instruction.get(2).substring(1, instruction.get(2).length()))].value
+					- registerFile[Integer
+							.parseInt(instruction.get(3).substring(1, instruction.get(3).length()))].value;
+			writeBack(value1, instruction, index);
+			for (int i = 1; i < ARS.RStation.length; i++) {
+				if (ARS.RStation[i][3] == (instruction.get(2)) && ARS.RStation[i][4] == (instruction.get(3))) {
+					ARS.RStation[i][0] = null;
+					ARS.RStation[i][1] = null;
+					ARS.RStation[i][2] = null;
+					ARS.RStation[i][3] = null;
+					ARS.RStation[i][4] = null;
+					ARS.RStation[i][5] = null;
+					ARS.RStation[i][6] = null;
+				}
+			}
+			break;
+		case "MUL.D":
+			double value2 = registerFile[Integer
+					.parseInt(instruction.get(2).substring(1, instruction.get(2).length()))].value
+					* registerFile[Integer
+							.parseInt(instruction.get(3).substring(1, instruction.get(3).length()))].value;
+			writeBack(value2, instruction, index);
+			for (int i = 1; i < MRS.RStation.length; i++) {
+				if (MRS.RStation[i][3] == (instruction.get(2)) && MRS.RStation[i][4] == (instruction.get(3))) {
+					MRS.RStation[i][0] = null;
+					MRS.RStation[i][1] = null;
+					MRS.RStation[i][2] = null;
+					MRS.RStation[i][3] = null;
+					MRS.RStation[i][4] = null;
+					MRS.RStation[i][5] = null;
+					MRS.RStation[i][6] = null;
+					break;
+				}
+			}
+			break;
+		case "DIV.D":
+			double value3 = registerFile[Integer
+					.parseInt(instruction.get(2).substring(1, instruction.get(2).length()))].value
+					/ registerFile[Integer
+							.parseInt(instruction.get(3).substring(1, instruction.get(3).length()))].value;
+			writeBack(value3, instruction, index);
+			for (int i = 1; i < MRS.RStation.length; i++) {
+				if (MRS.RStation[i][3] == (instruction.get(2)) && MRS.RStation[i][4] == (instruction.get(3))) {
+					MRS.RStation[i][0] = null;
+					MRS.RStation[i][1] = null;
+					MRS.RStation[i][2] = null;
+					MRS.RStation[i][3] = null;
+					MRS.RStation[i][4] = null;
+					MRS.RStation[i][5] = null;
+					MRS.RStation[i][6] = null;
+					break;
+				}
+			}
+			break;
+		case "S.D":
+			mem.StoreData(Integer.parseInt(instruction.get(2).substring(0, instruction.get(2).length())),
+					registerFile[Integer.parseInt(instruction.get(1).substring(1, instruction.get(1).length()))].value);
+			for (int i = 1; i < SB.storeBuff.length; i++) {
+				if (SB.storeBuff[i][2] == (instruction.get(2))) {
+					SB.storeBuff[i][1] = null;
+					SB.storeBuff[i][2] = null;
+					SB.storeBuff[i][3] = null;
+					SB.storeBuff[i][4] = null;
+					break;
+				}	
+			}
+			break;
+		case "L.D":
+			double value5 = mem
+					.LoadData(Integer.parseInt(instruction.get(2).substring(0, instruction.get(2).length())));
+			writeBack(value5, instruction, index);
+			LB.loadBuff[index][1] = null;
+			LB.loadBuff[index][2] = null;
+			break;
+		}
+	}
+
+	public static int countLineBufferedReader(String fileName) {
+		int lines = 0;
+		try (BufferedReader reader = new BufferedReader(new FileReader(fileName))) {
+			while (reader.readLine() != null)
+				lines++;
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		return lines;
+
+	}
+
+	public static boolean fullStations() {
+		boolean flag = false;
+		boolean flag2 = false;
+		boolean flag3 = false;
+		boolean flag4 = false;
+		for (int i = 1; i < ARS.RStation.length; i++) {
+			if (ARS.RStation[i][1] == (null)) {
+				flag = false;
+			} else {
+				flag = true;
+				break;
+			}
+		}
+		for (int i = 1; i < MRS.RStation.length; i++) {
+			if (MRS.RStation[i][1] == (null)) {
+				flag2 = false;
+			} else {
+				flag2 = true;
+				break;
+			}
+		}
+		for (int i = 1; i < LB.loadBuff.length; i++) {
+			if (LB.loadBuff[i][1] == (null)) {
+				flag3 = false;
+			} else {
+				flag3 = true;
+				break;
+			}
+		}
+		for (int i = 1; i < SB.storeBuff.length; i++) {
+			if (SB.storeBuff[i][1] == (null)) {
+				flag4 = false;
+			} else {
+				flag4 = true;
+				break;
+			}
+		}
+		return flag || flag2 || flag3 || flag4;
+	}
+
+	public static void writeBack(double value, Vector<String> instruction, int index) {
+		commonDataBus = value;
+		for (int i = 1; i < ARS.RStation.length; i++) {
+			String s = "";
+			String q = "";
+			for (int j = 0; j < registerFile.length; j++) {
+				if (registerFile[j].Qi.equals(ARS.RStation[i][5])) {
+					s = registerFile[j].name;
+				}
+				if (registerFile[j].Qi.equals(ARS.RStation[i][6])) {
+					q = registerFile[j].name;
+				}
+			}
+			if (s.equals(instruction.get(1))) {
+				ARS.RStation[i][3] = value + "";
+				ARS.RStation[i][5] = null;
+				break;
+			} else if (q.equals(instruction.get(1))) {
+				ARS.RStation[i][4] = value + "";
+				ARS.RStation[i][6] = null;
+				break;
+			}
+		}
+		for (int i = 1; i < MRS.RStation.length; i++) {
+			String s = "";
+			String q = "";
+			for (int j = 0; j < registerFile.length; j++) {
+				if (registerFile[j].Qi.equals(ARS.RStation[i][5])) {
+					s = registerFile[j].name;
+				}
+				if (registerFile[j].Qi.equals(ARS.RStation[i][6])) {
+					q = registerFile[j].name;
+				}
+			}
+			if (s.equals(instruction.get(1))) {
+				MRS.RStation[i][3] = value + "";
+				MRS.RStation[i][5] = null;
+				break;
+			} else if (q.equals(instruction.get(1))) {
+				MRS.RStation[i][4] = value + "";
+				MRS.RStation[i][6] = null;
+				break;
+			}
+		}
+		for (int i = 1; i < registerFile.length; i++) {
+			if (registerFile[i].Qi.equals(instruction.get(1))) {
+				registerFile[i].value = value;
+				registerFile[i].Qi = "";
+				break;
+			}
+		}
+	}
+
+	public static int Fetch(String fileName) throws Exception {
+		String line = "";
+		BufferedReader br = new BufferedReader(new FileReader(fileName));
+		int instrCount = 0;
+		while ((line = br.readLine()) != null) {
+			Vector<String> vec = new Vector<String>();
+			String[] array = line.split(" ");
+			for (String s : array) {
+				vec.add(s);
+			}
+			if (vec.size() == 3) {
+				vec.add("-1");
+				vec.add("-1");
+				vec.add("-1");
+				vec.add("-1");
+				vec.add("-1");
+			}
+			if (vec.size() == 4) {
+				vec.add("-1");
+				vec.add("-1");
+				vec.add("-1");
+				vec.add("-1");
+			}
+			IQ.queue.add(vec);
+			instrCount++;
+		}
+		return instrCount;
+	}
+
+	public static void tomasulo(String fileName) throws Exception {
+		System.out.println("Clock : " + clock);
+		System.out.println("Instruction Queue");
+		System.out.println(IQ.queue);
+		System.out.println("________________________________________________________________________________");
+		int instructionCount = Fetch(fileName);
+		System.out.println("Clock : " + clock);
+		System.out.println("Instruction Queue");
+		System.out.println(IQ.queue);
+		clock++;
+		do {
+			System.out.println(fullStations() + "Full Stations");
+			if (instructionCount > 0) {
+				IssueInstruction();
+				instructionCount--;
+			}
+			if (clock >= 2) {
+				startExecution();
+			}
+			System.out.println("Clock : " + clock);
+			System.out.println("Instruction Queue");
+			System.out.println(IQ.queue);
+			System.out.println("AddReservationStation");
+			print2D(ARS.RStation);
+			System.out.println("MulReservationStation");
+			print2D(MRS.RStation);
+			System.out.println("LoadBuffer");
+			print2D(LB.loadBuff);
+			System.out.println("StoreBuffer");
+			print2D(SB.storeBuff);
+			System.out.println("Register File");
+			for (int i = 0; i < registerFile.length; i++) {
+				System.out.println(registerFile[i].name + " " + registerFile[i].Qi);
+			}
+			System.out.println("----------------------------------------------------------------------");
+			clock++;
+		} while (fullStations());
+	}
+
+	public static void print2D(String mat[][]) {
+		for (int i = 0; i < mat.length; i++)
+			for (int j = 0; j < mat[i].length; j++)
+				System.out.print(mat[i][j] + " ");
+		System.out.println();
+	}
+
+	public static void main(String[] args) throws Throwable {
+		Tomasulo jerry = new Tomasulo();
+		Scanner sc = new Scanner(System.in);
+		System.out.println("Enter ADD Latency : ");
+		addlat = sc.nextInt();
+		System.out.println("Enter MUL Latency : ");
+		mullat = sc.nextInt();
+		System.out.println("Enter Store Latency : ");
+		storelatency = sc.nextInt();
+		System.out.println("Enter Load Latency : ");
+		loadlatency = sc.nextInt();
+		tomasulo("C:\\Users\\youss\\eclipse-workspace\\MicroProcessors\\src\\testCases.txt");
+	}
+}
